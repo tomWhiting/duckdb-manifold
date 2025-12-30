@@ -135,7 +135,7 @@ for row in result.fetchall():
     print(row)
 
 print("\\n=== Query: Find people over 25 ===")
-result = conn.execute("SELECT id, prop_name, prop_age FROM manifold_entities('{}') WHERE CAST(prop_age AS INTEGER) > 25")
+result = conn.execute("SELECT id, prop_name, prop_age FROM manifold_entities('{}') WHERE prop_age != '' AND CAST(prop_age AS INTEGER) > 25")
 for row in result.fetchall():
     print(row)
 
@@ -147,10 +147,11 @@ for row in result.fetchall():
 print("\\nAll tests passed!")
 "#, test_db_path, test_db_path, test_db_path, test_db_path);
 
-    let output = Command::new("./configure/venv/bin/python3")
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let output = Command::new(format!("{}/configure/venv/bin/python3", manifest_dir))
         .arg("-c")
         .arg(&python_script)
-        .current_dir("/Users/tom/Developer/projects/khitomer/components/duckdb-manifold")
+        .current_dir(manifest_dir)
         .output()?;
 
     println!("{}", String::from_utf8_lossy(&output.stdout));

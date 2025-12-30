@@ -3,7 +3,7 @@ name = "duckdb_manifold"
 version = "0.1.0"
 edition = "2021"
 description = "DuckDB extension for querying ManifoldDB databases"
-authors = ["Garak <garak@khitomer.local>"]
+authors = ["Tom Whiting <tom@ablative.com.au>"]
 
 [lib]
 crate-type = ["cdylib"]
@@ -27,8 +27,8 @@ duckdb-loadable-macros = "=0.1.13"
 libduckdb-sys = { version = "=1.4.3", features = ["loadable-extension"] }
 
 # ManifoldDB storage layer
-manifoldb-storage = { path = "../manifoldb/crates/manifoldb-storage" }
-manifoldb-core = { path = "../manifoldb/crates/manifoldb-core" }
+manifoldb-storage = "0.1.2"
+manifoldb-core = "0.1.2"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
