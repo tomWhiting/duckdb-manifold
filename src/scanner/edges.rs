@@ -12,7 +12,7 @@
 //! ## Scanning Strategy
 //!
 //! This scanner uses cursor-based streaming to efficiently scan edges:
-//! - The storage engine is opened once in bind() and shared across all phases
+//! - The storage engine is cached globally (opened once per path, reused)
 //! - No upfront ID collection - edges are scanned directly via cursor
 //! - Each batch continues from the last key seen, avoiding redundant work
 
@@ -24,7 +24,10 @@ use std::{
     collections::HashMap,
     error::Error,
     ffi::CString,
-    sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
 };
 
 use manifoldb_core::encoding::Decoder;
@@ -33,13 +36,13 @@ use manifoldb_storage::backends::RedbEngine;
 use manifoldb_storage::{Cursor, StorageEngine, Transaction};
 
 use crate::schema::{DiscoveredColumn, EdgeSchemaDiscovery};
-use super::{BATCH_SIZE, SCHEMA_SAMPLE_SIZE};
+use super::{get_cached_engine, BATCH_SIZE, SCHEMA_SAMPLE_SIZE};
 
-/// Bind data for edge scanner - holds schema and shared engine
+/// Bind data for edge scanner - holds schema and database path
 #[repr(C)]
 pub struct ManifoldEdgesBindData {
-    /// Shared storage engine (opened once, reused across all phases)
-    pub engine: Arc<RedbEngine>,
+    /// Path to the ManifoldDB database
+    pub db_path: String,
     /// Discovered schema columns
     pub columns: Vec<DiscoveredColumn>,
     /// Map from column name to index for fast lookup
@@ -63,15 +66,15 @@ impl VTab for ManifoldEdgesVTab {
     type InitData = ManifoldEdgesInitData;
     type BindData = ManifoldEdgesBindData;
 
-    /// Bind phase: open engine, discover schema, set up columns
+    /// Bind phase: discover schema, set up columns
     fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn Error>> {
         // Get database path from first parameter
         let db_path = bind.get_parameter(0).to_string();
 
-        // Open database once - this engine will be shared across all phases
-        let engine = Arc::new(RedbEngine::open(&db_path)?);
+        // Get cached engine (opens once, reused)
+        let engine = get_cached_engine(&db_path)?;
 
-        // Discover schema using the shared engine
+        // Discover schema using the engine
         let (columns, column_index) = discover_edge_schema(&engine)?;
 
         // Register discovered columns with DuckDB
@@ -79,12 +82,8 @@ impl VTab for ManifoldEdgesVTab {
             bind.add_result_column(&col.name, col.to_logical_type_handle());
         }
 
-        // Memory barrier required to ensure DuckDB sees all column registrations
-        // before returning bind data (race condition with DuckDB's internal threading)
-        std::sync::atomic::fence(std::sync::atomic::Ordering::SeqCst);
-
         Ok(ManifoldEdgesBindData {
-            engine,
+            db_path,
             columns,
             column_index,
         })
@@ -137,18 +136,14 @@ impl ManifoldEdgesVTab {
             return Ok(());
         }
 
-        // Get the shared engine and schema
-        let engine = &bind_data.engine;
-        let column_index = &bind_data.column_index;
+        // Get the cached engine
+        let engine = get_cached_engine(&bind_data.db_path)?;
 
-        // Get the continuation key (where we left off)
-        let start_after_key = {
-            let guard = init_data.last_key.lock().unwrap();
-            guard.clone()
-        };
+        // Get the continuation key
+        let start_after_key = init_data.last_key.lock().unwrap().clone();
 
         // Scan the next batch using cursor-based streaming
-        let (edges, next_key) = scan_edge_batch(engine, start_after_key.as_deref(), BATCH_SIZE)?;
+        let (edges, next_key) = scan_edge_batch(&engine, start_after_key.as_deref(), BATCH_SIZE)?;
 
         if edges.is_empty() {
             // No more edges - we're done
@@ -160,13 +155,10 @@ impl ManifoldEdgesVTab {
         let batch_size = edges.len();
 
         // Update the continuation marker for the next batch
-        {
-            let mut guard = init_data.last_key.lock().unwrap();
-            *guard = next_key;
-        }
+        *init_data.last_key.lock().unwrap() = next_key;
 
         // Populate the output with edge data
-        populate_edge_output(&edges, column_index, output)?;
+        populate_edge_output(&edges, &bind_data.column_index, output)?;
 
         output.set_len(batch_size);
 
@@ -246,11 +238,14 @@ fn scan_edge_batch(
             };
 
             // Process first entry if we have one
-            if let Some((key, value)) = first_entry {
-                if let Ok(edge) = Edge::decode(&value) {
-                    last_key = Some(key.clone());
-                    edges.push(edge);
-                }
+            let Some((key, value)) = first_entry else {
+                // No more entries - return empty
+                return Ok((edges, last_key));
+            };
+
+            if let Ok(edge) = Edge::decode(&value) {
+                last_key = Some(key.clone());
+                edges.push(edge);
             }
 
             // Continue reading until we have a full batch
