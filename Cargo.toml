@@ -1,7 +1,9 @@
 [package]
-name = "rusty_quack"
+name = "duckdb_manifold"
 version = "0.1.0"
 edition = "2021"
+description = "DuckDB extension for querying ManifoldDB databases"
+authors = ["Garak <garak@khitomer.local>"]
 
 [lib]
 crate-type = ["cdylib"]
@@ -11,15 +13,27 @@ lto = true
 strip = true
 
 [[example]]
-# crate-type can't be (at the moment) be overriden for specific targets
-# src/wasm_lib.rs forwards to src/lib.rs so that we can change from cdylib
-# (that is needed while compiling natively) to staticlib (needed since the
-# actual linking will be done via emcc
-name = "rusty_quack"
+name = "duckdb_manifold"
 path = "src/wasm_lib.rs"
 crate-type = ["staticlib"]
 
+[[bin]]
+name = "integration_test"
+path = "tests/integration_test.rs"
+
 [dependencies]
-duckdb = { version = "=1.4.3", features = ["vtab-loadable"] }
+duckdb = { version = "=1.4.3", features = ["vtab-loadable", "vtab-arrow"] }
 duckdb-loadable-macros = "=0.1.13"
 libduckdb-sys = { version = "=1.4.3", features = ["loadable-extension"] }
+
+# ManifoldDB storage layer
+manifoldb-storage = { path = "../manifoldb/crates/manifoldb-storage" }
+manifoldb-core = { path = "../manifoldb/crates/manifoldb-core" }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
