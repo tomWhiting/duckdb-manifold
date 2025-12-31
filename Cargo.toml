@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 description = "DuckDB extension for querying ManifoldDB databases"
 authors = ["Tom Whiting <tom@ablative.com.au>"]
+repository = "https://github.com/tomWhiting/duckdb-manifold"
+license = "MIT"
 
 [lib]
 crate-type = ["cdylib"]
