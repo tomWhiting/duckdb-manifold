@@ -1,116 +1,112 @@
-# DuckDB Rust extension template
-This is an **experimental** template for Rust based extensions based on the C Extension API of DuckDB. The goal is to
-turn this eventually into a stable basis for pure-Rust DuckDB extensions that can be submitted to the Community extensions
-repository
+# DuckDB-Manifold Extension
 
-Features:
-- No DuckDB build required
-- No C++ or C code required
-- CI/CD chain preconfigured
-- (Coming soon) Works with community extensions
+A DuckDB extension for querying ManifoldDB graph databases directly via SQL.
 
-## Cloning
+## What It Does
 
-Clone the repo with submodules
+Query ManifoldDB's redb storage directly from DuckDB - no data export, no ETL. Point DuckDB at your `.redb` file and run SQL.
+
+## Installation
+
+### Building from Source
 
 ```shell
-git clone --recurse-submodules <repo>
+# Clone with submodules
+git clone --recurse-submodules https://github.com/tomWhiting/duckdb-manifold.git
+cd duckdb-manifold
+
+# Configure (sets up Python venv with DuckDB)
+make configure
+
+# Build
+make debug    # or: make release
 ```
 
-## Dependencies
-In principle, these extensions can be compiled with the Rust toolchain alone. However, this template relies on some additional
-tooling to make life a little easier and to be able to share CI/CD infrastructure with extension templates for other languages:
+### Dependencies
 
-- Python3
-- Python3-venv
-- [Make](https://www.gnu.org/software/make)
+- Rust toolchain
+- Python 3
+- Make
 - Git
 
-Installing these dependencies will vary per platform:
-- For Linux, these come generally pre-installed or are available through the distro-specific package manager.
-- For MacOS, [homebrew](https://formulae.brew.sh/).
-- For Windows, [chocolatey](https://community.chocolatey.org/).
+## Usage
 
-## Building
-After installing the dependencies, building is a two-step process. Firstly run:
-```shell
-make configure
-```
-This will ensure a Python venv is set up with DuckDB and DuckDB's test runner installed. Additionally, depending on configuration,
-DuckDB will be used to determine the correct platform for which you are compiling.
+```python
+import duckdb
 
-Then, to build the extension run:
-```shell
-make debug
-```
-This delegates the build process to cargo, which will produce a shared library in `target/debug/<shared_lib_name>`. After this step,
-a script is run to transform the shared library into a loadable extension by appending a binary footer. The resulting extension is written
-to the `build/debug` directory.
+conn = duckdb.connect(config={'allow_unsigned_extensions': True})
+conn.execute("LOAD 'build/debug/duckdb_manifold.duckdb_extension'")
 
-To create optimized release binaries, simply run `make release` instead.
-
-### Running the extension
-To run the extension code, start `duckdb` with `-unsigned` flag. This will allow you to load the local extension file.
-
-```sh
-duckdb -unsigned
+# Query entities
+result = conn.execute("SELECT * FROM manifold_entities('/path/to/database.redb')")
+for row in result.fetchall():
+    print(row)
 ```
 
-After loading the extension by the file path, you can use the functions provided by the extension (in this case, `rusty_quack()`).
+### Query Entities
 
 ```sql
-LOAD './build/debug/extension/rusty_quack/rusty_quack.duckdb_extension';
-SELECT * FROM rusty_quack('Jane');
+SELECT * FROM manifold_entities('/path/to/database.redb');
 ```
 
+Returns:
+- `id` - Entity ID (VARCHAR)
+- `labels` - JSON array of labels (VARCHAR)
+- `prop_*` - One column per discovered property
+
+### Query Edges
+
+```sql
+SELECT * FROM manifold_edges('/path/to/database.redb');
 ```
-┌─────────────────────┐
-│       column0       │
-│       varchar       │
-├─────────────────────┤
-│ Rusty Quack Jane 🐥 │
-└─────────────────────┘
+
+Returns:
+- `id` - Edge ID (VARCHAR)
+- `source` - Source entity ID (VARCHAR)
+- `target` - Target entity ID (VARCHAR)
+- `edge_type` - Relationship type (VARCHAR)
+- `prop_*` - One column per discovered property
+
+### Filter, Aggregate, Join
+
+Full DuckDB SQL works:
+
+```sql
+-- Filter entities
+SELECT prop_name, CAST(prop_age AS INTEGER) as age
+FROM manifold_entities('/path/to/db.redb')
+WHERE prop_age != '' AND CAST(prop_age AS INTEGER) > 25;
+
+-- Aggregate edges
+SELECT edge_type, COUNT(*) as count
+FROM manifold_edges('/path/to/db.redb')
+GROUP BY edge_type;
+
+-- Join entities and edges
+SELECT e1.prop_name as person, edge.edge_type, e2.prop_name as target
+FROM manifold_entities('/path/to/db.redb') e1
+JOIN manifold_edges('/path/to/db.redb') edge ON e1.id = edge.source
+JOIN manifold_entities('/path/to/db.redb') e2 ON edge.target = e2.id;
 ```
+
+## How It Works
+
+- **Dynamic schema discovery**: Samples entities at bind time to discover property columns
+- **Cursor-based streaming**: Reads in batches of 1024 for efficiency
+- **Shared engine cache**: Multiple queries share the same database connection
+- **All columns VARCHAR**: DuckDB casts as needed in queries
 
 ## Testing
-This extension uses the DuckDB Python client for testing. This should be automatically installed in the `make configure` step.
-The tests themselves are written in the SQLLogicTest format, just like most of DuckDB's tests. A sample test can be found in
-`test/sql/<extension_name>.test`. To run the tests using the *debug* build:
 
 ```shell
-make test_debug
+# Run integration test
+cargo run --bin integration_test
 ```
 
-or for the *release* build:
-```shell
-make test_release
-```
+## Target DuckDB Version
 
-### Version switching
-Testing with different DuckDB versions is really simple:
+v1.4.3
 
-First, run
-```
-make clean_all
-```
-to ensure the previous `make configure` step is deleted.
+## License
 
-Then, run
-```
-DUCKDB_TEST_VERSION=v1.3.2 make configure
-```
-to select a different duckdb version to test with
-
-Finally, build and test with
-```
-make debug
-make test_debug
-```
-
-### Known issues
-This is a bit of a footgun, but the extensions produced by this template may (or may not) be broken on windows on python3.11
-with the following error on extension load:
-```shell
-IO Error: Extension '<name>.duckdb_extension' could not be loaded: The specified module could not be found
-```
-This was resolved by using python 3.12
+MIT
